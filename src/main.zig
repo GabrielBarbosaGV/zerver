@@ -3,18 +3,13 @@ const std = @import("std");
 pub fn main() !void {
     var buf: [100000]u8 = undefined;
 
-    var socket = std.net.StreamServer.init(.{});
+    const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 4321);
 
-    const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 1234);
+    var server = try address.listen(.{});
 
-    _ = try socket.listen(address);
+    var socket = try server.accept();
 
-    const client = try socket.accept();
-    const stream = client.stream;
+    _ = try socket.stream.read(&buf);
 
-    _ = try stream.read(&buf);
-
-    const stdout_writer = std.io.getStdOut().writer();
-
-    try stdout_writer.print("Read:\n{s}\n", .{buf});
+    std.debug.print("Read:\n{s}\n", .{buf});
 }

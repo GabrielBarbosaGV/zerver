@@ -14,17 +14,18 @@ const RequestType = enum {
 
 const RequestInfo = struct {
     request_type: ?RequestType,
-    route: ?[]const u8,
+    route: ?std.ArrayList(u8),
 };
 
-const HttpRequestReader = struct {
+pub const HttpRequestReader = struct {
     request_info: *RequestInfo,
     allocator: std.mem.Allocator,
     previous_bytes: std.ArrayList(u8),
-    cursor_position: u32,
+    cursor_position: usize,
     strings_to_request_types: std.StringHashMap(RequestType),
     has_just_read_http_method: bool,
     has_just_begun: bool,
+    has_just_read_route: bool,
 
     const Self = @This();
 
@@ -50,39 +51,75 @@ const HttpRequestReader = struct {
             .has_just_read_http_method = false,
             .has_just_begun = true,
             .cursor_position = 0,
+            .has_just_read_route = false,
         };
     }
 
     pub fn deinit(self: *Self) void {
+        if (self.request_info.route) |route| {
+            route.deinit();
+        }
+
         self.allocator.destroy(self.request_info);
         self.strings_to_request_types.deinit();
         self.previous_bytes.deinit();
     }
 
     pub fn readNextBytes(self: *Self, next_bytes: []const u8) !void {
-        if (self.hasJustReadHttpMethod()) {
-            self.clearPreviousBytes();
+        self.cursor_position = 0;
 
-            for (next_bytes) |next_byte| {
-                if (next_byte == ' ')
+        while (true) {
+            if (self.hasJustBegun()) {
+                var has_read_whole_http_method = false;
+
+                for (next_bytes, self.cursor_position..) |byte, cursor_position| {
+                    if (byte == ' ') {
+                        self.cursor_position = cursor_position;
+                        has_read_whole_http_method = true;
+                        break;
+                    }
+
+                    try self.previous_bytes.append(byte);
+                }
+
+                if (!has_read_whole_http_method)
                     break;
 
-                try self.previous_bytes.append(next_byte);
-            }
+                if (self.strings_to_request_types.get(self.previous_bytes.items)) |request_type| {
+                    self.request_info.request_type = request_type;
+                }
 
-            self.request_info.route = self.previous_bytes.items;
-        } else if (self.hasJustBegun()) {
-            for (next_bytes) |next_byte| {
-                if (next_byte == ' ')
+                self.cursor_position += 1;
+                self.setHasJustReadHttpMethod(true);
+                self.clearPreviousBytes();
+            } else if (self.hasJustReadHttpMethod()) {
+                if (next_bytes.len <= self.cursor_position)
                     break;
 
-                try self.previous_bytes.append(next_byte);
-            }
+                var has_read_whole_route = false;
 
-            const string = self.previous_bytes.items;
+                for (next_bytes[self.cursor_position..], self.cursor_position..) |byte, cursor_position| {
+                    if (byte == ' ') {
+                        has_read_whole_route = true;
+                        self.cursor_position = cursor_position;
+                        break;
+                    }
 
-            if (self.strings_to_request_types.get(string)) |item| {
-                self.request_info.request_type = item;
+                    try self.previous_bytes.append(byte);
+                }
+
+                if (!has_read_whole_route)
+                    break;
+
+                self.request_info.route = std.ArrayList(u8).init(self.allocator);
+
+                try self.request_info.route.?.appendSlice(self.previous_bytes.items);
+
+                self.cursor_position += 1;
+                self.setHasJustReadRoute(true);
+                self.clearPreviousBytes();
+            } else {
+                break;
             }
         }
     }
@@ -94,10 +131,13 @@ const HttpRequestReader = struct {
     }
 
     pub fn setHasJustReadHttpMethod(self: *Self, has_just_read_http_method: bool) void {
+        if (has_just_read_http_method)
+            self.setHasJustBegun(false);
+
         self.has_just_read_http_method = has_just_read_http_method;
     }
 
-    pub fn hasJustReadHttpMethod(self: *Self) bool {
+    fn hasJustReadHttpMethod(self: *Self) bool {
         return self.has_just_read_http_method;
     }
 
@@ -105,8 +145,19 @@ const HttpRequestReader = struct {
         self.has_just_begun = has_just_begun;
     }
 
-    pub fn hasJustBegun(self: *Self) bool {
+    fn hasJustBegun(self: *Self) bool {
         return self.has_just_begun;
+    }
+
+    pub fn setHasJustReadRoute(self: *Self, has_just_read_route: bool) void {
+        if (has_just_read_route)
+            self.setHasJustReadHttpMethod(false);
+
+        self.has_just_read_route = has_just_read_route;
+    }
+
+    fn resetCursorPosition(self: *Self) void {
+        self.cursor_position = 0;
     }
 };
 
@@ -129,7 +180,7 @@ fn insertStringRequestTypes(hash_map: *std.StringHashMap(RequestType)) !void {
 }
 
 test "HttpRequestReader reports reading a GET request for the \"GET\" string" {
-    const request: []const u8 = "GET";
+    const request: []const u8 = "GET ";
 
     const allocator = std.testing.allocator;
 
@@ -145,7 +196,7 @@ test "HttpRequestReader reports reading a GET request for the \"GET\" string" {
 
 test "HttpRequestReader reports reading a GET request when it is split into multiple strings" {
     const request_first_part: []const u8 = "GE";
-    const request_second_part: []const u8 = "T";
+    const request_second_part: []const u8 = "T ";
 
     const allocator = std.testing.allocator;
 
@@ -169,9 +220,17 @@ test "HttpRequestReader knows all HTTP methods" {
 }
 
 fn assertVerbIsKnown(tuple: HttpMethodTuple) !void {
-    const request = tuple[0];
+    const method_name = tuple[0];
 
     const allocator = std.testing.allocator;
+
+    var request_list = std.ArrayList(u8).init(allocator);
+    defer request_list.deinit();
+
+    try request_list.appendSlice(method_name);
+    try request_list.append(' ');
+
+    const request = request_list.items;
 
     var http_request_reader = try HttpRequestReader.init(allocator);
     defer http_request_reader.deinit();
@@ -184,7 +243,7 @@ fn assertVerbIsKnown(tuple: HttpMethodTuple) !void {
 }
 
 test "HttpRequestReader reports correct route" {
-    const request: []const u8 = "/a/b/c";
+    const request: []const u8 = "/a/b/c ";
 
     const allocator = std.testing.allocator;
 
@@ -195,7 +254,24 @@ test "HttpRequestReader reports correct route" {
 
     try http_request_reader.readNextBytes(request);
 
-    for (request, http_request_reader.request_info.route.?) |c1, c2| {
+    for ("/a/b/c", http_request_reader.request_info.route.?.items) |c1, c2| {
+        try std.testing.expectEqual(c1, c2);
+    }
+}
+
+test "HttpRequestReader reports correct route after reading both request type and route" {
+    const request: []const u8 = "GET /a/b/c ";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    try http_request_reader.readNextBytes(request);
+
+    try std.testing.expectEqual(.get, http_request_reader.request_info.request_type);
+
+    for ("/a/b/c", http_request_reader.request_info.route.?.items) |c1, c2| {
         try std.testing.expectEqual(c1, c2);
     }
 }
