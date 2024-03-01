@@ -7,6 +7,7 @@ pub const HttpRequestReader = struct {
     cursor_position: usize,
     strings_to_request_types: std.StringHashMap(RequestType),
     read_state: ReadState,
+    should_continue_reading: bool,
 
     const Self = @This();
 
@@ -31,6 +32,7 @@ pub const HttpRequestReader = struct {
             .strings_to_request_types = strings_to_request_types,
             .cursor_position = 0,
             .read_state = .start,
+            .should_continue_reading = true,
         };
     }
 
@@ -47,31 +49,12 @@ pub const HttpRequestReader = struct {
     pub fn readNextBytes(self: *Self, next_bytes: []const u8) !void {
         self.cursor_position = 0;
 
-        while (true) {
-            if (self.hasJustBegun()) {
-                var has_read_whole_http_method = false;
+        self.setShouldContinueReading(true);
 
-                for (next_bytes, self.cursor_position..) |byte, cursor_position| {
-                    if (byte == ' ') {
-                        self.cursor_position = cursor_position;
-                        has_read_whole_http_method = true;
-                        break;
-                    }
-
-                    try self.previous_bytes.append(byte);
-                }
-
-                if (!has_read_whole_http_method)
-                    break;
-
-                if (self.strings_to_request_types.get(self.previous_bytes.items)) |request_type| {
-                    self.request_info.request_type = request_type;
-                }
-
-                self.cursor_position += 1;
-                self.setHasJustReadHttpMethod();
-                self.clearPreviousBytes();
-            } else if (self.hasJustReadHttpMethod()) {
+        while (self.shouldContinueReading()) {
+            if (self.read_state == .start) {
+                try self.readHttpMethod(next_bytes);
+            } else if (self.read_state == .http_method) {
                 if (next_bytes.len <= self.cursor_position)
                     break;
 
@@ -87,8 +70,10 @@ pub const HttpRequestReader = struct {
                     try self.previous_bytes.append(byte);
                 }
 
-                if (!has_read_whole_route)
-                    break;
+                if (!has_read_whole_route) {
+                    self.setShouldContinueReading(false);
+                    continue;
+                }
 
                 self.request_info.route = std.ArrayList(u8).init(self.allocator);
 
@@ -101,6 +86,33 @@ pub const HttpRequestReader = struct {
                 break;
             }
         }
+    }
+
+    fn readHttpMethod(self: *Self, next_bytes: []const u8) !void {
+        var has_read_whole_http_method = false;
+
+        for (next_bytes, self.cursor_position..) |byte, cursor_position| {
+            if (byte == ' ') {
+                self.cursor_position = cursor_position;
+                has_read_whole_http_method = true;
+                break;
+            }
+
+            try self.previous_bytes.append(byte);
+        }
+
+        if (!has_read_whole_http_method) {
+            self.setShouldContinueReading(false);
+            return;
+        }
+
+        if (self.strings_to_request_types.get(self.previous_bytes.items)) |request_type| {
+            self.request_info.request_type = request_type;
+        }
+
+        self.cursor_position += 1;
+        self.setHasJustReadHttpMethod();
+        self.clearPreviousBytes();
     }
 
     pub fn clearPreviousBytes(self: *Self) void {
@@ -131,6 +143,14 @@ pub const HttpRequestReader = struct {
 
     fn resetCursorPosition(self: *Self) void {
         self.cursor_position = 0;
+    }
+
+    fn shouldContinueReading(self: *Self) bool {
+        return self.should_continue_reading;
+    }
+
+    pub fn setShouldContinueReading(self: *Self, should_continue_reading: bool) void {
+        self.should_continue_reading = should_continue_reading;
     }
 };
 
