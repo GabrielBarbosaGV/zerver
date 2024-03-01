@@ -48,7 +48,9 @@ pub const HttpRequestReader = struct {
 
                 .route => try self.readRoute(next_bytes),
 
-                else => break,
+                .protocol_version => try self.readProtocolVersion(next_bytes),
+
+                .end => self.setShouldContinueReading(false),
             }
         }
     }
@@ -112,6 +114,33 @@ pub const HttpRequestReader = struct {
         self.clearPreviousBytes();
     }
 
+    fn readProtocolVersion(self: *Self, next_bytes: []const u8) !void {
+        var has_read_whole_protocol_version = false;
+
+        for (next_bytes[self.cursor_position..]) |byte| {
+            if (byte == '\n') {
+                has_read_whole_protocol_version = true;
+                break;
+            }
+
+            self.cursor_position += 1;
+            try self.previous_bytes.append(byte);
+        }
+
+        if (!has_read_whole_protocol_version) {
+            self.setShouldContinueReading(false);
+            return;
+        }
+
+        const eql = std.mem.eql;
+
+        if (eql(u8, "HTTP/1.1", self.previous_bytes.items))
+            self.request_info.protocol_version = .one_dot_one;
+
+        self.clearPreviousBytes();
+        self.cursor_position += 1;
+    }
+
     pub fn clearPreviousBytes(self: *Self) void {
         self.previous_bytes.deinit();
 
@@ -130,6 +159,10 @@ pub const HttpRequestReader = struct {
         self.read_state = .protocol_version;
     }
 
+    pub fn setHasJustReadProtocolVersion(self: *Self) void {
+        self.read_state = .end;
+    }
+
     fn resetCursorPosition(self: *Self) void {
         self.cursor_position = 0;
     }
@@ -140,6 +173,26 @@ pub const HttpRequestReader = struct {
 
     pub fn setShouldContinueReading(self: *Self, should_continue_reading: bool) void {
         self.should_continue_reading = should_continue_reading;
+    }
+};
+
+const RequestInfo = struct {
+    request_type: ?RequestType,
+    route: std.ArrayList(u8),
+    protocol_version: ?ProtocolVersion,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator) RequestInfo {
+        return Self{
+            .request_type = null,
+            .route = std.ArrayList(u8).init(allocator),
+            .protocol_version = null,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.route.deinit();
     }
 };
 
@@ -155,28 +208,17 @@ const RequestType = enum {
     patch,
 };
 
-const RequestInfo = struct {
-    request_type: ?RequestType,
-    route: std.ArrayList(u8),
-
-    const Self = @This();
-
-    pub fn init(allocator: std.mem.Allocator) RequestInfo {
-        return Self{
-            .request_type = null,
-            .route = std.ArrayList(u8).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.route.deinit();
-    }
-};
-
 const ReadState = enum {
     http_method,
     route,
     protocol_version,
+    end,
+};
+
+const ProtocolVersion = enum {
+    one_dot_one,
+    two,
+    three,
 };
 
 const METHOD_NAMES_TO_REQUEST_TYPES = [_]HttpMethodTuple{
@@ -311,4 +353,19 @@ test "HttpRequestReader reports reading correct route when it is split" {
     for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
         try std.testing.expectEqual(c1, c2);
     }
+}
+
+test "HttpRequestReader reports reading correct protocol version" {
+    const request: []const u8 = "HTTP/1.1\n";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    http_request_reader.setHasJustReadRoute();
+
+    try http_request_reader.readNextBytes(request);
+
+    try std.testing.expectEqual(.one_dot_one, http_request_reader.request_info.protocol_version);
 }
