@@ -55,33 +55,7 @@ pub const HttpRequestReader = struct {
             if (self.read_state == .start) {
                 try self.readHttpMethod(next_bytes);
             } else if (self.read_state == .http_method) {
-                if (next_bytes.len <= self.cursor_position)
-                    break;
-
-                var has_read_whole_route = false;
-
-                for (next_bytes[self.cursor_position..], self.cursor_position..) |byte, cursor_position| {
-                    if (byte == ' ') {
-                        has_read_whole_route = true;
-                        self.cursor_position = cursor_position;
-                        break;
-                    }
-
-                    try self.previous_bytes.append(byte);
-                }
-
-                if (!has_read_whole_route) {
-                    self.setShouldContinueReading(false);
-                    continue;
-                }
-
-                self.request_info.route = std.ArrayList(u8).init(self.allocator);
-
-                try self.request_info.route.?.appendSlice(self.previous_bytes.items);
-
-                self.cursor_position += 1;
-                self.setHasJustReadRoute();
-                self.clearPreviousBytes();
+                try self.readRoute(next_bytes);
             } else {
                 break;
             }
@@ -112,6 +86,38 @@ pub const HttpRequestReader = struct {
 
         self.cursor_position += 1;
         self.setHasJustReadHttpMethod();
+        self.clearPreviousBytes();
+    }
+
+    fn readRoute(self: *Self, next_bytes: []const u8) !void {
+        if (next_bytes.len <= self.cursor_position) {
+            self.setShouldContinueReading(false);
+            return;
+        }
+
+        var has_read_whole_route = false;
+
+        for (next_bytes[self.cursor_position..], self.cursor_position..) |byte, cursor_position| {
+            if (byte == ' ') {
+                has_read_whole_route = true;
+                self.cursor_position = cursor_position;
+                break;
+            }
+
+            try self.previous_bytes.append(byte);
+        }
+
+        if (!has_read_whole_route) {
+            self.setShouldContinueReading(false);
+            return;
+        }
+
+        self.request_info.route = std.ArrayList(u8).init(self.allocator);
+
+        try self.request_info.route.?.appendSlice(self.previous_bytes.items);
+
+        self.cursor_position += 1;
+        self.setHasJustReadRoute();
         self.clearPreviousBytes();
     }
 
