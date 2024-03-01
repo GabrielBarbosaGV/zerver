@@ -52,12 +52,12 @@ pub const HttpRequestReader = struct {
         self.setShouldContinueReading(true);
 
         while (self.shouldContinueReading()) {
-            if (self.read_state == .start) {
-                try self.readHttpMethod(next_bytes);
-            } else if (self.read_state == .http_method) {
-                try self.readRoute(next_bytes);
-            } else {
-                break;
+            switch (self.read_state) {
+                .start => try self.readHttpMethod(next_bytes),
+
+                .http_method => try self.readRoute(next_bytes),
+
+                else => break,
             }
         }
     }
