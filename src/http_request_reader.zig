@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const HttpRequestReader = struct {
-    request_info: *RequestInfo,
+    request_info: RequestInfo,
     allocator: std.mem.Allocator,
     previous_bytes: std.ArrayList(u8),
     cursor_position: usize,
@@ -11,13 +11,8 @@ pub const HttpRequestReader = struct {
 
     const Self = @This();
 
-    const Node = std.DoublyLinkedList(u8).Node;
-
     pub fn init(allocator: std.mem.Allocator) !Self {
-        const request_info = try allocator.create(RequestInfo);
-
-        request_info.request_type = null;
-        request_info.route = null;
+        const request_info = RequestInfo.init(allocator);
 
         const previous_bytes = std.ArrayList(u8).init(allocator);
 
@@ -37,11 +32,7 @@ pub const HttpRequestReader = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.request_info.route) |route| {
-            route.deinit();
-        }
-
-        self.allocator.destroy(self.request_info);
+        self.request_info.deinit();
         self.strings_to_request_types.deinit();
         self.previous_bytes.deinit();
     }
@@ -65,12 +56,13 @@ pub const HttpRequestReader = struct {
     fn readHttpMethod(self: *Self, next_bytes: []const u8) !void {
         var has_read_whole_http_method = false;
 
-        for (next_bytes, self.cursor_position..) |byte, cursor_position| {
+        for (next_bytes) |byte| {
             if (byte == ' ') {
-                self.cursor_position = cursor_position;
                 has_read_whole_http_method = true;
                 break;
             }
+
+            self.cursor_position += 1;
 
             try self.previous_bytes.append(byte);
         }
@@ -97,12 +89,13 @@ pub const HttpRequestReader = struct {
 
         var has_read_whole_route = false;
 
-        for (next_bytes[self.cursor_position..], self.cursor_position..) |byte, cursor_position| {
+        for (next_bytes[self.cursor_position..]) |byte| {
             if (byte == ' ') {
                 has_read_whole_route = true;
-                self.cursor_position = cursor_position;
                 break;
             }
+
+            self.cursor_position += 1;
 
             try self.previous_bytes.append(byte);
         }
@@ -112,9 +105,7 @@ pub const HttpRequestReader = struct {
             return;
         }
 
-        self.request_info.route = std.ArrayList(u8).init(self.allocator);
-
-        try self.request_info.route.?.appendSlice(self.previous_bytes.items);
+        try self.request_info.route.appendSlice(self.previous_bytes.items);
 
         self.cursor_position += 1;
         self.setHasJustReadRoute();
@@ -174,7 +165,20 @@ const RequestType = enum {
 
 const RequestInfo = struct {
     request_type: ?RequestType,
-    route: ?std.ArrayList(u8),
+    route: std.ArrayList(u8),
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator) RequestInfo {
+        return Self{
+            .request_type = null,
+            .route = std.ArrayList(u8).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.route.deinit();
+    }
 };
 
 const ReadState = enum {
@@ -276,7 +280,7 @@ test "HttpRequestReader reports correct route" {
 
     try http_request_reader.readNextBytes(request);
 
-    for ("/a/b/c", http_request_reader.request_info.route.?.items) |c1, c2| {
+    for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
         try std.testing.expectEqual(c1, c2);
     }
 }
@@ -293,7 +297,26 @@ test "HttpRequestReader reports correct route after reading both request type an
 
     try std.testing.expectEqual(.get, http_request_reader.request_info.request_type);
 
-    for ("/a/b/c", http_request_reader.request_info.route.?.items) |c1, c2| {
+    for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
+        try std.testing.expectEqual(c1, c2);
+    }
+}
+
+test "HttpRequestReader reports reading correct route when it is split" {
+    const first_request: []const u8 = "/a/";
+    const second_request: []const u8 = "b/c ";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    http_request_reader.setHasJustReadHttpMethod();
+
+    try http_request_reader.readNextBytes(first_request);
+    try http_request_reader.readNextBytes(second_request);
+
+    for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
         try std.testing.expectEqual(c1, c2);
     }
 }
