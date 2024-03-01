@@ -1,31 +1,12 @@
 const std = @import("std");
 
-const RequestType = enum {
-    get,
-    post,
-    head,
-    put,
-    delete,
-    connect,
-    options,
-    trace,
-    patch,
-};
-
-const RequestInfo = struct {
-    request_type: ?RequestType,
-    route: ?std.ArrayList(u8),
-};
-
 pub const HttpRequestReader = struct {
     request_info: *RequestInfo,
     allocator: std.mem.Allocator,
     previous_bytes: std.ArrayList(u8),
     cursor_position: usize,
     strings_to_request_types: std.StringHashMap(RequestType),
-    has_just_read_http_method: bool,
-    has_just_begun: bool,
-    has_just_read_route: bool,
+    read_state: ReadState,
 
     const Self = @This();
 
@@ -48,10 +29,8 @@ pub const HttpRequestReader = struct {
             .request_info = request_info,
             .previous_bytes = previous_bytes,
             .strings_to_request_types = strings_to_request_types,
-            .has_just_read_http_method = false,
-            .has_just_begun = true,
             .cursor_position = 0,
-            .has_just_read_route = false,
+            .read_state = .start,
         };
     }
 
@@ -90,7 +69,7 @@ pub const HttpRequestReader = struct {
                 }
 
                 self.cursor_position += 1;
-                self.setHasJustReadHttpMethod(true);
+                self.setHasJustReadHttpMethod();
                 self.clearPreviousBytes();
             } else if (self.hasJustReadHttpMethod()) {
                 if (next_bytes.len <= self.cursor_position)
@@ -116,7 +95,7 @@ pub const HttpRequestReader = struct {
                 try self.request_info.route.?.appendSlice(self.previous_bytes.items);
 
                 self.cursor_position += 1;
-                self.setHasJustReadRoute(true);
+                self.setHasJustReadRoute();
                 self.clearPreviousBytes();
             } else {
                 break;
@@ -130,15 +109,12 @@ pub const HttpRequestReader = struct {
         self.previous_bytes = std.ArrayList(u8).init(self.allocator);
     }
 
-    pub fn setHasJustReadHttpMethod(self: *Self, has_just_read_http_method: bool) void {
-        if (has_just_read_http_method)
-            self.setHasJustBegun(false);
-
-        self.has_just_read_http_method = has_just_read_http_method;
+    pub fn setHasJustReadHttpMethod(self: *Self) void {
+        self.read_state = .http_method;
     }
 
     fn hasJustReadHttpMethod(self: *Self) bool {
-        return self.has_just_read_http_method;
+        return self.read_state == .http_method;
     }
 
     pub fn setHasJustBegun(self: *Self, has_just_begun: bool) void {
@@ -146,19 +122,39 @@ pub const HttpRequestReader = struct {
     }
 
     fn hasJustBegun(self: *Self) bool {
-        return self.has_just_begun;
+        return self.read_state == .start;
     }
 
-    pub fn setHasJustReadRoute(self: *Self, has_just_read_route: bool) void {
-        if (has_just_read_route)
-            self.setHasJustReadHttpMethod(false);
-
-        self.has_just_read_route = has_just_read_route;
+    pub fn setHasJustReadRoute(self: *Self) void {
+        self.read_state = .route;
     }
 
     fn resetCursorPosition(self: *Self) void {
         self.cursor_position = 0;
     }
+};
+
+const RequestType = enum {
+    get,
+    post,
+    head,
+    put,
+    delete,
+    connect,
+    options,
+    trace,
+    patch,
+};
+
+const RequestInfo = struct {
+    request_type: ?RequestType,
+    route: ?std.ArrayList(u8),
+};
+
+const ReadState = enum {
+    start,
+    http_method,
+    route,
 };
 
 const METHOD_NAMES_TO_REQUEST_TYPES = [_]HttpMethodTuple{
@@ -250,7 +246,7 @@ test "HttpRequestReader reports correct route" {
     var http_request_reader = try HttpRequestReader.init(allocator);
     defer http_request_reader.deinit();
 
-    http_request_reader.setHasJustReadHttpMethod(true);
+    http_request_reader.setHasJustReadHttpMethod();
 
     try http_request_reader.readNextBytes(request);
 
