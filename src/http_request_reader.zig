@@ -26,7 +26,7 @@ pub const HttpRequestReader = struct {
             .previous_bytes = previous_bytes,
             .strings_to_request_types = strings_to_request_types,
             .cursor_position = 0,
-            .read_state = .start,
+            .read_state = .http_method,
             .should_continue_reading = true,
         };
     }
@@ -44,9 +44,9 @@ pub const HttpRequestReader = struct {
 
         while (self.shouldContinueReading()) {
             switch (self.read_state) {
-                .start => try self.readHttpMethod(next_bytes),
+                .http_method => try self.readHttpMethod(next_bytes),
 
-                .http_method => try self.readRoute(next_bytes),
+                .route => try self.readRoute(next_bytes),
 
                 else => break,
             }
@@ -119,23 +119,15 @@ pub const HttpRequestReader = struct {
     }
 
     pub fn setHasJustReadHttpMethod(self: *Self) void {
-        self.read_state = .http_method;
-    }
-
-    fn hasJustReadHttpMethod(self: *Self) bool {
-        return self.read_state == .http_method;
+        self.read_state = .route;
     }
 
     pub fn setHasJustBegun(self: *Self, has_just_begun: bool) void {
         self.has_just_begun = has_just_begun;
     }
 
-    fn hasJustBegun(self: *Self) bool {
-        return self.read_state == .start;
-    }
-
     pub fn setHasJustReadRoute(self: *Self) void {
-        self.read_state = .route;
+        self.read_state = .protocol_version;
     }
 
     fn resetCursorPosition(self: *Self) void {
@@ -182,9 +174,9 @@ const RequestInfo = struct {
 };
 
 const ReadState = enum {
-    start,
     http_method,
     route,
+    protocol_version,
 };
 
 const METHOD_NAMES_TO_REQUEST_TYPES = [_]HttpMethodTuple{
