@@ -134,8 +134,15 @@ pub const HttpRequestReader = struct {
 
         const eql = std.mem.eql;
 
-        if (eql(u8, "HTTP/1.1", self.previous_bytes.items))
+        if (eql(u8, "HTTP/1.1", self.previous_bytes.items)) {
             self.request_info.protocol_version = .one_dot_one;
+        } else if (eql(u8, "HTTP/2", self.previous_bytes.items)) {
+            self.request_info.protocol_version = .two;
+        } else if (eql(u8, "HTTP/3", self.previous_bytes.items)) {
+            self.request_info.protocol_version = .three;
+        } else {
+            return RequestReadError.UnsupportedProtocol;
+        }
 
         self.clearPreviousBytes();
         self.cursor_position += 1;
@@ -219,6 +226,10 @@ const ProtocolVersion = enum {
     one_dot_one,
     two,
     three,
+};
+
+const RequestReadError = error{
+    UnsupportedProtocol,
 };
 
 const METHOD_NAMES_TO_REQUEST_TYPES = [_]HttpMethodTuple{
@@ -368,4 +379,66 @@ test "HttpRequestReader reports reading correct protocol version" {
     try http_request_reader.readNextBytes(request);
 
     try std.testing.expectEqual(.one_dot_one, http_request_reader.request_info.protocol_version);
+}
+
+test "HttpRequestReader reports reading correct protocol version if it is split" {
+    const first_request: []const u8 = "HTTP";
+    const second_request: []const u8 = "/1.1\n";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    http_request_reader.setHasJustReadRoute();
+
+    try http_request_reader.readNextBytes(first_request);
+    try http_request_reader.readNextBytes(second_request);
+
+    try std.testing.expectEqual(.one_dot_one, http_request_reader.request_info.protocol_version);
+}
+
+test "HttpRequestReader reports reading HTTP/2 protocol version" {
+    const request: []const u8 = "HTTP/2\n";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    http_request_reader.setHasJustReadRoute();
+
+    try http_request_reader.readNextBytes(request);
+
+    try std.testing.expectEqual(.two, http_request_reader.request_info.protocol_version);
+}
+
+test "HttpRequestReader reports reading HTTP/3 protocol version" {
+    const request: []const u8 = "HTTP/3\n";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    http_request_reader.setHasJustReadRoute();
+
+    try http_request_reader.readNextBytes(request);
+
+    try std.testing.expectEqual(.three, http_request_reader.request_info.protocol_version);
+}
+
+test "HttpRequestReader reports error when unsupported protocol version is specified" {
+    const request: []const u8 = "HTTP/4\n";
+
+    const allocator = std.testing.allocator;
+
+    var http_request_reader = try HttpRequestReader.init(allocator);
+    defer http_request_reader.deinit();
+
+    http_request_reader.setHasJustReadRoute();
+
+    const result = http_request_reader.readNextBytes(request);
+
+    try std.testing.expectError(RequestReadError.UnsupportedProtocol, result);
 }
