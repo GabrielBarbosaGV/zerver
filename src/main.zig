@@ -7,9 +7,13 @@ pub fn main() !void {
 
     var server = try address.listen(.{});
 
-    var socket = try server.accept();
+    while (true) {
+        var socket = try server.accept();
 
-    _ = try socket.stream.read(&buf);
+        _ = try socket.stream.read(&buf);
 
-    std.debug.print("Read:\n{s}\n", .{buf});
+        std.debug.print("Read:\n{s}\n\n", .{buf});
+
+        socket.stream.close();
+    }
 }

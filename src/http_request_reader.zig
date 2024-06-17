@@ -56,18 +56,7 @@ pub const HttpRequestReader = struct {
     }
 
     fn readHttpMethod(self: *Self, next_bytes: []const u8) !void {
-        var has_read_whole_http_method = false;
-
-        for (next_bytes) |byte| {
-            if (byte == ' ') {
-                has_read_whole_http_method = true;
-                break;
-            }
-
-            self.cursor_position += 1;
-
-            try self.previous_bytes.append(byte);
-        }
+        const has_read_whole_http_method = try self.readUntilDelimiterChar(next_bytes, ' ');
 
         if (!has_read_whole_http_method) {
             self.setShouldContinueReading(false);
@@ -146,6 +135,22 @@ pub const HttpRequestReader = struct {
 
         self.clearPreviousBytes();
         self.cursor_position += 1;
+    }
+
+    fn readUntilDelimiterChar(self: *Self, next_bytes: []const u8, delimiter: u8) !bool {
+        var has_read_upto_delimiter = false;
+
+        for (next_bytes[self.cursor_position..]) |byte| {
+            if (byte == delimiter) {
+                has_read_upto_delimiter = true;
+                break;
+            }
+
+            self.cursor_position += 1;
+            try self.previous_bytes.append(byte);
+        }
+
+        return has_read_upto_delimiter;
     }
 
     pub fn clearPreviousBytes(self: *Self) void {
