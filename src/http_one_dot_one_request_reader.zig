@@ -127,17 +127,8 @@ pub const HttpOneDotOneRequestReader = struct {
             return;
         }
 
-        const eql = std.mem.eql;
-
-        if (eql(u8, "HTTP/1.1", self.previous_bytes.items)) {
-            self.request_info.protocol_version = .one_dot_one;
-        } else if (eql(u8, "HTTP/2", self.previous_bytes.items)) {
-            self.request_info.protocol_version = .two;
-        } else if (eql(u8, "HTTP/3", self.previous_bytes.items)) {
-            self.request_info.protocol_version = .three;
-        } else {
-            return RequestReadError.UnsupportedProtocol;
-        }
+        if (!std.mem.eql(u8, "HTTP/1.1", self.previous_bytes.items))
+            return RequestReadError.NotOneDotOne;
 
         self.clearPreviousBytes();
         self.cursor_position += 1;
@@ -197,7 +188,6 @@ pub const HttpOneDotOneRequestReader = struct {
 const RequestInfo = struct {
     request_type: ?RequestType,
     route: std.ArrayList(u8),
-    protocol_version: ?ProtocolVersion,
 
     const Self = @This();
 
@@ -205,7 +195,6 @@ const RequestInfo = struct {
         return Self{
             .request_type = null,
             .route = std.ArrayList(u8).init(allocator),
-            .protocol_version = null,
         };
     }
 
@@ -233,16 +222,7 @@ const ReadState = enum {
     end,
 };
 
-const ProtocolVersion = enum {
-    one_dot_one,
-    two,
-    three,
-};
-
-const RequestReadError = error{
-    UnknownHttpMethod,
-    UnsupportedProtocol,
-};
+const RequestReadError = error{ UnknownHttpMethod, UnsupportedProtocol, NotOneDotOne };
 
 const METHOD_NAMES_TO_REQUEST_TYPES = [_]HttpMethodTuple{
     .{ "GET", .get },
