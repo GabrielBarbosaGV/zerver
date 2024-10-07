@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const HttpRequestReader = struct {
+pub const HttpOneDotOneRequestReader = struct {
     request_info: RequestInfo,
     allocator: std.mem.Allocator,
     previous_bytes: std.ArrayList(u8),
@@ -65,11 +65,17 @@ pub const HttpRequestReader = struct {
 
         if (self.strings_to_request_types.get(self.previous_bytes.items)) |request_type| {
             self.request_info.request_type = request_type;
+        } else {
+            return RequestReadError.UnknownHttpMethod;
         }
 
         self.cursor_position += 1;
-        self.setHasJustReadHttpMethod();
+        self.setReadingRoute();
         self.clearPreviousBytes();
+    }
+
+    pub fn writePreviousBytesInto(self: *Self, array_list: *std.ArrayList(u8)) !void {
+        try array_list.appendSlice(self.previous_bytes.items);
     }
 
     fn readRoute(self: *Self, next_bytes: []const u8) !void {
@@ -99,7 +105,7 @@ pub const HttpRequestReader = struct {
         try self.request_info.route.appendSlice(self.previous_bytes.items);
 
         self.cursor_position += 1;
-        self.setHasJustReadRoute();
+        self.setReadingProtocolVersion();
         self.clearPreviousBytes();
     }
 
@@ -159,19 +165,19 @@ pub const HttpRequestReader = struct {
         self.previous_bytes = std.ArrayList(u8).init(self.allocator);
     }
 
-    pub fn setHasJustReadHttpMethod(self: *Self) void {
+    pub fn setReadingRoute(self: *Self) void {
         self.read_state = .route;
     }
 
-    pub fn setHasJustBegun(self: *Self, has_just_begun: bool) void {
-        self.has_just_begun = has_just_begun;
+    pub fn setReadingHttpMethod(self: *Self) void {
+        self.read_state = .http_method;
     }
 
-    pub fn setHasJustReadRoute(self: *Self) void {
+    pub fn setReadingProtocolVersion(self: *Self) void {
         self.read_state = .protocol_version;
     }
 
-    pub fn setHasJustReadProtocolVersion(self: *Self) void {
+    pub fn setReachedEnd(self: *Self) void {
         self.read_state = .end;
     }
 
@@ -234,6 +240,7 @@ const ProtocolVersion = enum {
 };
 
 const RequestReadError = error{
+    UnknownHttpMethod,
     UnsupportedProtocol,
 };
 
@@ -255,41 +262,41 @@ fn insertStringRequestTypes(hash_map: *std.StringHashMap(RequestType)) !void {
     }
 }
 
-test "HttpRequestReader reports reading a GET request for the \"GET\" string" {
+test "HttpOneDotOneRequestReader reports reading a GET request for the \"GET\" string" {
     const request: []const u8 = "GET ";
 
     const allocator = std.testing.allocator;
 
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
 
-    try http_request_reader.readNextBytes(request);
+    try http_one_dot_one_request_reader.readNextBytes(request);
 
-    const request_info = http_request_reader.request_info;
+    const request_info = http_one_dot_one_request_reader.request_info;
 
     try std.testing.expectEqual(.get, request_info.request_type);
 }
 
-test "HttpRequestReader reports reading a GET request when it is split into multiple strings" {
+test "HttpOneDotOneRequestReader reports reading a GET request when it is split into multiple strings" {
     const request_first_part: []const u8 = "GE";
     const request_second_part: []const u8 = "T ";
 
     const allocator = std.testing.allocator;
 
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
 
-    try http_request_reader.readNextBytes(request_first_part);
-    try http_request_reader.readNextBytes(request_second_part);
+    try http_one_dot_one_request_reader.readNextBytes(request_first_part);
+    try http_one_dot_one_request_reader.readNextBytes(request_second_part);
 
-    const request_info = http_request_reader.request_info;
+    const request_info = http_one_dot_one_request_reader.request_info;
 
     try std.testing.expectEqual(.get, request_info.request_type);
 }
 
 const HttpMethodTuple = std.meta.Tuple(&.{ []const u8, RequestType });
 
-test "HttpRequestReader knows all HTTP methods" {
+test "HttpOneDotOneRequestReader knows all HTTP methods" {
     for (METHOD_NAMES_TO_REQUEST_TYPES) |tuple| {
         try assertVerbIsKnown(tuple);
     }
@@ -308,142 +315,95 @@ fn assertVerbIsKnown(tuple: HttpMethodTuple) !void {
 
     const request = request_list.items;
 
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
 
-    try http_request_reader.readNextBytes(request);
+    try http_one_dot_one_request_reader.readNextBytes(request);
 
-    const request_info = http_request_reader.request_info;
+    const request_info = http_one_dot_one_request_reader.request_info;
 
     try std.testing.expectEqual(tuple[1], request_info.request_type);
 }
 
-test "HttpRequestReader reports correct route" {
+test "HttpOneDotOneRequestReader reports unknown HTTP method" {
+    const request: []const u8 = "SPLASH ";
+
+    const allocator = std.testing.allocator;
+
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
+
+    http_one_dot_one_request_reader.setReadingHttpMethod();
+
+    const err = http_one_dot_one_request_reader.readNextBytes(request);
+
+    try std.testing.expectEqual(RequestReadError.UnknownHttpMethod, err);
+}
+
+test "HttpOneDotOneRequestReader returns unknown HTTP method string" {
+    const request: []const u8 = "SPLASH ";
+
+    const allocator = std.testing.allocator;
+
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
+
+    http_one_dot_one_request_reader.setReadingHttpMethod();
+
+    const err = http_one_dot_one_request_reader.readNextBytes(request);
+
+    var unknown_http_method = std.ArrayList(u8).init(allocator);
+    defer unknown_http_method.deinit();
+
+    try http_one_dot_one_request_reader.writePreviousBytesInto(&unknown_http_method);
+
+    try std.testing.expectEqualStrings("SPLASH", unknown_http_method.items);
+    try std.testing.expectEqual(RequestReadError.UnknownHttpMethod, err);
+}
+
+test "HttpOneDotOneRequestReader reports correct route" {
     const request: []const u8 = "/a/b/c ";
 
     const allocator = std.testing.allocator;
 
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
 
-    http_request_reader.setHasJustReadHttpMethod();
+    http_one_dot_one_request_reader.setReadingRoute();
 
-    try http_request_reader.readNextBytes(request);
+    try http_one_dot_one_request_reader.readNextBytes(request);
 
-    for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
-        try std.testing.expectEqual(c1, c2);
-    }
+    try std.testing.expectEqualStrings("/a/b/c", http_one_dot_one_request_reader.request_info.route.items);
 }
 
-test "HttpRequestReader reports correct route after reading both request type and route" {
+test "HttpOneDotOneRequestReader reports correct route after reading both request type and route" {
     const request: []const u8 = "GET /a/b/c ";
 
     const allocator = std.testing.allocator;
 
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
 
-    try http_request_reader.readNextBytes(request);
+    try http_one_dot_one_request_reader.readNextBytes(request);
 
-    try std.testing.expectEqual(.get, http_request_reader.request_info.request_type);
+    try std.testing.expectEqual(.get, http_one_dot_one_request_reader.request_info.request_type);
 
-    for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
-        try std.testing.expectEqual(c1, c2);
-    }
+    try std.testing.expectEqualStrings("/a/b/c", http_one_dot_one_request_reader.request_info.route.items);
 }
 
-test "HttpRequestReader reports reading correct route when it is split" {
+test "HttpOneDotOneRequestReader reports reading correct route when it is split" {
     const first_request: []const u8 = "/a/";
     const second_request: []const u8 = "b/c ";
 
     const allocator = std.testing.allocator;
 
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
+    var http_one_dot_one_request_reader = try HttpOneDotOneRequestReader.init(allocator);
+    defer http_one_dot_one_request_reader.deinit();
 
-    http_request_reader.setHasJustReadHttpMethod();
+    http_one_dot_one_request_reader.setReadingRoute();
 
-    try http_request_reader.readNextBytes(first_request);
-    try http_request_reader.readNextBytes(second_request);
+    try http_one_dot_one_request_reader.readNextBytes(first_request);
+    try http_one_dot_one_request_reader.readNextBytes(second_request);
 
-    for ("/a/b/c", http_request_reader.request_info.route.items) |c1, c2| {
-        try std.testing.expectEqual(c1, c2);
-    }
-}
-
-test "HttpRequestReader reports reading correct protocol version" {
-    const request: []const u8 = "HTTP/1.1\n";
-
-    const allocator = std.testing.allocator;
-
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
-
-    http_request_reader.setHasJustReadRoute();
-
-    try http_request_reader.readNextBytes(request);
-
-    try std.testing.expectEqual(.one_dot_one, http_request_reader.request_info.protocol_version);
-}
-
-test "HttpRequestReader reports reading correct protocol version if it is split" {
-    const first_request: []const u8 = "HTTP";
-    const second_request: []const u8 = "/1.1\n";
-
-    const allocator = std.testing.allocator;
-
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
-
-    http_request_reader.setHasJustReadRoute();
-
-    try http_request_reader.readNextBytes(first_request);
-    try http_request_reader.readNextBytes(second_request);
-
-    try std.testing.expectEqual(.one_dot_one, http_request_reader.request_info.protocol_version);
-}
-
-test "HttpRequestReader reports reading HTTP/2 protocol version" {
-    const request: []const u8 = "HTTP/2\n";
-
-    const allocator = std.testing.allocator;
-
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
-
-    http_request_reader.setHasJustReadRoute();
-
-    try http_request_reader.readNextBytes(request);
-
-    try std.testing.expectEqual(.two, http_request_reader.request_info.protocol_version);
-}
-
-test "HttpRequestReader reports reading HTTP/3 protocol version" {
-    const request: []const u8 = "HTTP/3\n";
-
-    const allocator = std.testing.allocator;
-
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
-
-    http_request_reader.setHasJustReadRoute();
-
-    try http_request_reader.readNextBytes(request);
-
-    try std.testing.expectEqual(.three, http_request_reader.request_info.protocol_version);
-}
-
-test "HttpRequestReader reports error when unsupported protocol version is specified" {
-    const request: []const u8 = "HTTP/4\n";
-
-    const allocator = std.testing.allocator;
-
-    var http_request_reader = try HttpRequestReader.init(allocator);
-    defer http_request_reader.deinit();
-
-    http_request_reader.setHasJustReadRoute();
-
-    const result = http_request_reader.readNextBytes(request);
-
-    try std.testing.expectError(RequestReadError.UnsupportedProtocol, result);
+    try std.testing.expectEqualStrings("/a/b/c", http_one_dot_one_request_reader.request_info.route.items);
 }
