@@ -1,5 +1,5 @@
 const std = @import("std");
-const DelimiterReader = @import("./str/delimiter_reader.zig");
+const DelimiterReader = @import("./str/delimiter_reader.zig").DelimiterReader;
 
 pub const HttpOneDotOneRequestReader = struct {
     request_info: RequestInfo,
@@ -10,6 +10,7 @@ pub const HttpOneDotOneRequestReader = struct {
     read_state: ReadState,
     should_continue_reading: bool,
     carriage_return_newline_delimiter_reader: DelimiterReader(u8),
+    space_delimiter_reader: DelimiterReader(u8),
 
     const Self = @This();
 
@@ -30,7 +31,8 @@ pub const HttpOneDotOneRequestReader = struct {
             .cursor_position = 0,
             .read_state = .http_method,
             .should_continue_reading = true,
-            .carriage_return_newline_delimiter_reader = DelimiterReader(u8).init(allocator),
+            .carriage_return_newline_delimiter_reader = try DelimiterReader(u8).init("\r\n", allocator),
+            .space_delimiter_reader = try DelimiterReader(u8).init(" ", allocator),
         };
     }
 
