@@ -66,3 +66,43 @@ test "DelimiterReader returns 2 when attempting to get \"C\" from \"ABC\"" {
 
     try std.testing.expectEqual(2, result);
 }
+
+test "DelimiterReader returns 7 when attempting to get \"Fro\" from \"To and Fro\"" {
+    const allocator = std.testing.allocator;
+
+    var delimiter_reader = try DelimiterReader(u8).init("Fro", allocator);
+    defer delimiter_reader.deinit();
+
+    const result = delimiter_reader.readNextItems("To and Fro");
+
+    try std.testing.expectEqual(7, result);
+}
+
+test "DelimiterReader returns 7 when attempting to get \"Fro\" from \"To and Fro\" over two lines" {
+    const allocator = std.testing.allocator;
+
+    var delimiter_reader = try DelimiterReader(u8).init("Fro", allocator);
+    defer delimiter_reader.deinit();
+
+    var result = delimiter_reader.readNextItems("To and");
+    try std.testing.expectEqual(null, result);
+
+    result = delimiter_reader.readNextItems(" Fro");
+    try std.testing.expectEqual(7, result);
+}
+
+test "DelimiterReade returns 10 when attempting to get \"he\" from \"Here and there\" over three lines" {
+    const allocator = std.testing.allocator;
+
+    var delimiter_reader = try DelimiterReader(u8).init("he", allocator);
+    defer delimiter_reader.deinit();
+
+    var result = delimiter_reader.readNextItems("He");
+    try std.testing.expectEqual(null, result);
+
+    result = delimiter_reader.readNextItems("re");
+    try std.testing.expectEqual(null, result);
+
+    result = delimiter_reader.readNextItems(" and There");
+    try std.testing.expectEqual(10, result);
+}
