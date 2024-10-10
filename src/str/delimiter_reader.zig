@@ -33,13 +33,16 @@ pub fn DelimiterReader(comptime T: type) type {
                 if (self.delimiter_index == self.delimiter.len) {
                     const i = self.current_match_index;
 
-                    self.reset();
+                    self.resetMatchAndDelimiterIndex();
+
+                    self.read_char_count += self.delimiter.len - 1;
 
                     return i;
+                } else {
+                    self.read_char_count += 1;
                 }
 
                 buffer_index += 1;
-                self.read_char_count += 1;
             }
 
             return null;
@@ -47,9 +50,13 @@ pub fn DelimiterReader(comptime T: type) type {
 
         pub fn deinit(_: *Self) void {}
 
-        pub fn reset(self: *Self) void {
+        fn resetMatchAndDelimiterIndex(self: *Self) void {
             self.delimiter_index = 0;
             self.current_match_index = null;
+        }
+
+        pub fn reset(self: *Self) void {
+            self.resetMatchAndDelimiterIndex();
             self.read_char_count = 0;
         }
     };
@@ -117,15 +124,15 @@ test "DelimiterReader returns 10 when attempting to get \"he\" from \"Here and t
     try std.testing.expectEqual(10, result);
 }
 
-test "DelimiterReader resets position successfully" {
+test "DelimiterReader returns indices of matches on separate lines" {
     const allocator = std.testing.allocator;
 
     var delimiter_reader = try DelimiterReader(u8).init("he", allocator);
     defer delimiter_reader.deinit();
 
-    var result = delimiter_reader.readNextItems("Here and there");
-    try std.testing.expectEqual(10, result);
-
-    result = delimiter_reader.readNextItems("hehe");
+    var result = delimiter_reader.readNextItems("he");
     try std.testing.expectEqual(0, result);
+
+    result = delimiter_reader.readNextItems("he");
+    try std.testing.expectEqual(2, result);
 }
