@@ -23,6 +23,12 @@ pub const HttpOneDotOneRequestReader = struct {
 
         try insertStringRequestTypes(&strings_to_request_types);
 
+        var carriage_return_newline_delimiter_reader = try DelimiterReader(u8).init("\r\n", allocator);
+        var space_delimiter_reader = try DelimiterReader(u8).init(" ", allocator);
+
+        carriage_return_newline_delimiter_reader.number_to_return = .return_end_of_match_over_this_line;
+        space_delimiter_reader.number_to_return = .return_end_of_match_over_this_line;
+
         return Self{
             .allocator = allocator,
             .request_info = request_info,
@@ -31,8 +37,8 @@ pub const HttpOneDotOneRequestReader = struct {
             .cursor_position = 0,
             .read_state = .http_method,
             .should_continue_reading = true,
-            .carriage_return_newline_delimiter_reader = try DelimiterReader(u8).init("\r\n", allocator),
-            .space_delimiter_reader = try DelimiterReader(u8).init(" ", allocator),
+            .carriage_return_newline_delimiter_reader = carriage_return_newline_delimiter_reader,
+            .space_delimiter_reader = space_delimiter_reader,
         };
     }
 
@@ -40,6 +46,8 @@ pub const HttpOneDotOneRequestReader = struct {
         self.request_info.deinit();
         self.strings_to_request_types.deinit();
         self.previous_bytes.deinit();
+        self.carriage_return_newline_delimiter_reader.deinit();
+        self.space_delimiter_reader.deinit();
     }
 
     pub fn readNextBytes(self: *Self, next_bytes: []const u8) !void {
@@ -68,13 +76,14 @@ pub const HttpOneDotOneRequestReader = struct {
             return;
         }
 
+        self.space_delimiter_reader.reset();
+
         if (self.strings_to_request_types.get(self.previous_bytes.items)) |request_type| {
             self.request_info.request_type = request_type;
         } else {
             return RequestReadError.UnknownHttpMethod;
         }
 
-        self.cursor_position += 1;
         self.setReadingRoute();
         self.clearPreviousBytes();
     }
@@ -84,23 +93,7 @@ pub const HttpOneDotOneRequestReader = struct {
     }
 
     fn readRoute(self: *Self, next_bytes: []const u8) !void {
-        if (next_bytes.len <= self.cursor_position) {
-            self.setShouldContinueReading(false);
-            return;
-        }
-
-        var has_read_whole_route = false;
-
-        for (next_bytes[self.cursor_position..]) |byte| {
-            if (byte == ' ') {
-                has_read_whole_route = true;
-                break;
-            }
-
-            self.cursor_position += 1;
-
-            try self.previous_bytes.append(byte);
-        }
+        const has_read_whole_route = try self.readUptoDelimiter(next_bytes, &self.space_delimiter_reader);
 
         if (!has_read_whole_route) {
             self.setShouldContinueReading(false);
@@ -109,7 +102,6 @@ pub const HttpOneDotOneRequestReader = struct {
 
         try self.request_info.route.appendSlice(self.previous_bytes.items);
 
-        self.cursor_position += 1;
         self.setReadingProtocolVersion();
         self.clearPreviousBytes();
     }
@@ -156,14 +148,12 @@ pub const HttpOneDotOneRequestReader = struct {
     }
 
     fn readUptoDelimiter(self: *Self, next_bytes: []const u8, delimiter_reader: *DelimiterReader(u8)) !bool {
-        const index: ?usize = delimiter_reader.readNextItems(next_bytes);
+        const index: ?usize = delimiter_reader.readNextItems(next_bytes[self.cursor_position..]);
 
         if (index) |i| {
-            const end_of_match = self.calculateIndexOfEndOfMatch(i);
+            try self.previous_bytes.appendSlice(next_bytes[self.cursor_position..(self.cursor_position + i - 1)]);
 
-            try self.previous_bytes.appendSlice(next_bytes[0..end_of_match]);
-
-            self.cursor_position += end_of_match;
+            self.cursor_position += i;
 
             return true;
         } else {
