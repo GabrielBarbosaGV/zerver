@@ -61,7 +61,7 @@ pub const HttpOneDotOneRequestReader = struct {
     }
 
     fn readHttpMethod(self: *Self, next_bytes: []const u8) !void {
-        const has_read_whole_http_method = try self.readUntilDelimiterChar(next_bytes, ' ');
+        const has_read_whole_http_method = try self.readUptoDelimiter(next_bytes, &self.space_delimiter_reader);
 
         if (!has_read_whole_http_method) {
             self.setShouldContinueReading(false);
@@ -153,6 +153,30 @@ pub const HttpOneDotOneRequestReader = struct {
         }
 
         return has_read_upto_delimiter;
+    }
+
+    fn readUptoDelimiter(self: *Self, next_bytes: []const u8, delimiter_reader: *DelimiterReader(u8)) !bool {
+        const index: ?usize = delimiter_reader.readNextItems(next_bytes);
+
+        if (index) |i| {
+            const end_of_match = self.calculateIndexOfEndOfMatch(i);
+
+            try self.previous_bytes.appendSlice(next_bytes[0..end_of_match]);
+
+            self.cursor_position += end_of_match;
+
+            return true;
+        } else {
+            self.cursor_position += next_bytes.len;
+
+            try self.previous_bytes.appendSlice(next_bytes);
+
+            return false;
+        }
+    }
+
+    fn calculateIndexOfEndOfMatch(self: *Self, match_index: usize) usize {
+        return match_index - self.previous_bytes.items.len;
     }
 
     pub fn clearPreviousBytes(self: *Self) void {

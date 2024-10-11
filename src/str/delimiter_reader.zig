@@ -59,6 +59,10 @@ pub fn DelimiterReader(comptime T: type) type {
             self.resetMatchAndDelimiterIndex();
             self.read_char_count = 0;
         }
+
+        pub fn getDelimiter(self: *Self) *[]const u8 {
+            return &self.delimiter;
+        }
     };
 }
 
