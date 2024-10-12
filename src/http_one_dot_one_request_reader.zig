@@ -151,7 +151,9 @@ pub const HttpOneDotOneRequestReader = struct {
         const index: ?usize = delimiter_reader.readNextItems(next_bytes[self.cursor_position..]);
 
         if (index) |i| {
-            try self.previous_bytes.appendSlice(next_bytes[self.cursor_position..(self.cursor_position + i - 1)]);
+            const end_of_content = self.cursor_position + i - 1;
+
+            try self.previous_bytes.appendSlice(next_bytes[self.cursor_position..end_of_content]);
 
             self.cursor_position += i;
 
@@ -199,7 +201,7 @@ pub const HttpOneDotOneRequestReader = struct {
         return self.should_continue_reading;
     }
 
-    pub fn setShouldContinueReading(self: *Self, should_continue_reading: bool) void {
+    fn setShouldContinueReading(self: *Self, should_continue_reading: bool) void {
         self.should_continue_reading = should_continue_reading;
     }
 };
